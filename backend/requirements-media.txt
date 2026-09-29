@@ -1,0 +1,4 @@
+# Sadece media-worker imajında: görsel/video modelleri
+nudenet==3.4.2
+onnxruntime==1.30.0
+opencv-python-headless==5.0.0.93

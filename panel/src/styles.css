@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* Koyu mod <html class="dark"> ile açılır (public/theme-init.js ilk boyamadan önce ayarlar) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Renkler CSS değişkenlerinde (HSL bileşenleri) tutulur; açık/koyu tema sadece değişkenleri değiştirir.
+ * Palet OTP / Communication Hub paneliyle aynıdır: açıkta beyaz kartlar, koyuda saf siyah zemin ve
+ * gölge yerine 1px kenarlıklar. Karar renkleri: izin = accent (yeşil), incele = sarı, engelle = destructive.
+ */
+:root {
+  --background: 0 0% 98%;
+  --foreground: 220 20% 10%;
+  --card: 0 0% 100%;
+  --muted: 220 14% 95%;
+  --muted-foreground: 220 10% 42%;
+  --faint-foreground: 220 9% 58%;
+  --border: 220 14% 89%;
+  --input: 220 13% 82%;
+  --primary: 216 90% 52%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 216 90% 52%;
+  --overlay: 220 30% 8%;
+
+  --allow: 152 60% 38%;
+  --allow-ink: 152 65% 30%;
+  --review: 40 92% 50%;
+  --review-ink: 32 90% 32%;
+  --block: 0 70% 50%;
+  --block-ink: 0 65% 42%;
+  --chart-line: 216 90% 52%;
+}
+
+.dark {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 93%;
+  --card: 0 0% 4%;
+  --muted: 0 0% 9%;
+  --muted-foreground: 0 0% 58%;
+  --faint-foreground: 0 0% 40%;
+  --border: 0 0% 13%;
+  --input: 0 0% 18%;
+  --primary: 216 95% 62%;
+  --primary-foreground: 0 0% 0%;
+  --ring: 216 95% 62%;
+  --overlay: 0 0% 0%;
+
+  --allow: 152 65% 48%;
+  --allow-ink: 152 65% 58%;
+  --review: 42 95% 55%;
+  --review-ink: 43 96% 62%;
+  --block: 0 75% 60%;
+  --block-ink: 0 85% 70%;
+  --chart-line: 216 95% 62%;
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Panel genelinde kullanılan anlamsal isimler */
+  --color-canvas: hsl(var(--background));
+  --color-surface: hsl(var(--card));
+  --color-sunken: hsl(var(--muted));
+  --color-line: hsl(var(--border));
+  --color-line-strong: hsl(var(--input));
+  --color-ink: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted-foreground));
+  --color-faint: hsl(var(--faint-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-focus: hsl(var(--ring));
+  --color-overlay: hsl(var(--overlay));
+
+  --color-allow: hsl(var(--allow));
+  --color-allow-ink: hsl(var(--allow-ink));
+  --color-allow-soft: hsl(var(--allow) / 0.14);
+  --color-review: hsl(var(--review));
+  --color-review-ink: hsl(var(--review-ink));
+  --color-review-soft: hsl(var(--review) / 0.16);
+  --color-block: hsl(var(--block));
+  --color-block-ink: hsl(var(--block-ink));
+  --color-block-soft: hsl(var(--block) / 0.14);
+
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+}
+
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1;
+}
+* { border-color: var(--color-line); }
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-thumb { border-radius: 9999px; background: hsl(var(--muted-foreground) / 0.3); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Sayfa açılışında sadece karar şeridi dolarak gelir */
+@keyframes strip-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.strip-animate { transform-origin: left; animation: strip-grow 700ms cubic-bezier(.2,.7,.2,1) both; }
+
+.recharts-cartesian-axis-tick-value { font-size: 11px; fill: var(--color-muted); }
+.recharts-tooltip-wrapper { outline: none; }
+.recharts-cartesian-grid line { stroke: var(--color-line); }

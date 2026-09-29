@@ -1,0 +1,241 @@
+# Dokploy uyumlu compose dosyası.
+# - Dışarıya port açılmaz. Dokploy > Domains sekmesinden:
+#     moderation.<domain>  → servis "api",   port 8000  (public moderasyon API'si)
+#     panel.<domain>       → servis "panel", port 80    (admin paneli)
+#   admin-api servisine domain BAĞLANMAZ; sadece panel üzerinden, iç ağdan erişilir.
+# - Tüm değerler Dokploy > Environment sekmesinden gelir.
+# - container_name kullanılmaz (Dokploy'un önerisi).
+
+# ${VAR:?mesaj} → değişken boşsa deploy daha başlamadan açık bir hata mesajıyla durur.
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER eksik}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD eksik}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB eksik}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD eksik}@redis:6379/0
+  API_KEY_PEPPER: ${API_KEY_PEPPER:?API_KEY_PEPPER eksik}
+  # Eşikler, hız sınırları, saklama süresi ve hizmet açık/kapalı admin panelinden yönetilir (veritabanında).
+  # Tüm medya Cloudflare R2'de. Sunucuda medya için volume/klasör yoktur.
+  R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+  R2_BUCKET: ${R2_BUCKET:-}
+  R2_JURISDICTION: ${R2_JURISDICTION:-}
+  # Layer 2 (isteğe bağlı). AI_API_KEY boşsa kapalı. Sağlayıcı, model, bütçe ve limitler PANELDEN yönetilir
+  # (AI ve maliyet sayfası). AI_BASE_URL boşsa OpenAI kullanılır.
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_BASE_URL: ${AI_BASE_URL:-}
+
+# Log dosyaları sınırlı: kesintisiz çalışan sunucuda loglar diski doldurmasın (servis başına en fazla 50 MB)
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+# Tüm uygulama servisleri için ortak sıkılaştırma: ayrıcalık yükseltme yok, Linux yetkileri kapalı.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  api:
+    build:
+      context: ./backend
+      target: base
+    <<: *hardening
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+      API_WORKERS: ${API_WORKERS:-4}
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Metin moderasyonu, webhook teslimatı, bakım (takılan iş kurtarma, saklama süresi temizliği)
+  worker:
+    build:
+      context: ./backend
+      target: base
+    <<: *hardening
+    restart: unless-stopped
+    stop_grace_period: 30s
+    command: ["arq", "app.worker.main.WorkerSettings"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.main.WorkerSettings"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Görsel / video: ffmpeg + OCR + NudeNet. CPU ve bellek sınırlı; bir video tüm sunucuyu kilitleyemez.
+  media-worker:
+    build:
+      context: ./backend
+      target: media
+    <<: *hardening
+    init: true   # ffmpeg/tesseract alt süreçleri düzgün temizlensin
+    # Video kareleri ve OCR geçici dosyaları RAM'de (disk değil); süreç bitince iz kalmaz
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    restart: unless-stopped
+    stop_grace_period: 120s
+    environment:
+      <<: *backend-env
+      OMP_NUM_THREADS: "2"
+    cpus: ${MEDIA_WORKER_CPUS:-4}
+    mem_limit: ${MEDIA_WORKER_MEMORY:-4g}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.main.MediaWorkerSettings"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Admin paneli API'si: dışarıya açılmaz, sadece panel (nginx) üzerinden erişilir.
+  admin-api:
+    build:
+      context: ./backend
+      target: base
+    <<: *hardening
+    restart: unless-stopped
+    # Güvenilen proxy listesi Dockerfile'daki FORWARDED_ALLOW_IPS'ten gelir (sadece iç ağ)
+    command: ["uvicorn", "app.admin.main:app", "--host", "0.0.0.0", "--port", "8001",
+              "--proxy-headers", "--no-server-header", "--timeout-keep-alive", "95"]
+    environment:
+      <<: *backend-env
+      PANEL_COOKIE_SECURE: "true"
+      PANEL_TIMEZONE: ${PANEL_TIMEZONE:-Europe/Istanbul}
+      # İlk yönetici (sadece hiç yönetici yokken kullanılır)
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_RESET_PASSWORD: ${ADMIN_RESET_PASSWORD:-false}
+    expose:
+      - "8001"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  panel:
+    <<: *logging
+    build:
+      context: ./panel
+      args:
+        # Entegrasyon örneklerinde gösterilen API adresi
+        VITE_PUBLIC_API_URL: ${PUBLIC_API_URL:-https://moderation.rovandcloud.com}
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      admin-api:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    <<: *logging
+    shm_size: "512mb"
+    # 8 vCPU / 32 GB sunucu için ayar. Bağlantı bütçesi: api 4x15 + admin 10 + worker 20 + media 20 ≈ 110
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=2GB", "-c", "effective_cache_size=8GB",
+              "-c", "work_mem=16MB", "-c", "maintenance_work_mem=512MB", "-c", "random_page_cost=1.1",
+              "-c", "checkpoint_completion_target=0.9", "-c", "wal_buffers=16MB",
+              "-c", "log_min_duration_statement=1000", "-c", "idle_in_transaction_session_timeout=120000"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER eksik}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD eksik}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB eksik}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1: ilk kurulum sırasındaki geçici sunucuyu değil, gerçekten hazır olan sunucuyu bekler
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    <<: *logging
+    restart: unless-stopped
+    # appendonly: kuyruk yeniden başlatmada kaybolmaz. noeviction: bellek dolsa bile iş silinmez.
+    command: ["sh", "-c", "exec redis-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD eksik}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Günlük veritabanı yedeği (pg_dump, sıkıştırılmış). Son BACKUP_KEEP_DAYS gün saklanır.
+  # Sunucu diski bozulursa yedek de gider: /backups klasörünü düzenli olarak sunucu dışına kopyalayın.
+  backup:
+    image: postgres:16-alpine
+    <<: *logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER eksik}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD eksik}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB eksik}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - backups:/backups
+    entrypoint: ["sh", "-c", "sleep 60; while true; do f=/backups/db-$$(date +%Y%m%d-%H%M).dump; pg_dump -Fc -f $$f.tmp && mv $$f.tmp $$f && echo backup ok $$f; find /backups -name 'db-*.dump' -mtime +$$BACKUP_KEEP_DAYS -delete; sleep 86400; done"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Layer 2 için isteğe bağlı yerel model sunucusu. Varsayılan olarak ÇALIŞMAZ (profil: ai).
+  # Açmak için: AI_BASE_URL=http://ollama:11434/v1 ve compose profili "ai". GPU yoksa küçük model seçin.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    expose:
+      - "11434"
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:
+  ollama:

@@ -1,0 +1,6 @@
+# Sokak ağzı kısaltmaları: sadece 'Sıkı' seviyede engellenir, 'Orta' seviyede serbest.
+amk
+amq
+aq
+mk
+sg

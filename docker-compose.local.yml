@@ -1,0 +1,15 @@
+# Sadece lokal geliştirme için.
+#   API:   http://localhost:8000
+#   Panel: http://localhost:8080
+# Kullanım: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"
+  admin-api:
+    environment:
+      # Lokal HTTP'de Secure cookie tarayıcı tarafından gönderilmez
+      PANEL_COOKIE_SECURE: "false"
+  panel:
+    ports:
+      - "127.0.0.1:8080:80"

@@ -1,0 +1,6 @@
+# Windows\x27tan push edilse bile bu dosyalar Linux satır sonlarıyla kalsın
+*.sh text eol=lf
+*.sql text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
